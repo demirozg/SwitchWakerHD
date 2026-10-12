@@ -12,11 +12,61 @@ share it.
 | **The game** | Your own dump of **The Wind Waker HD, USA or Europe** (title `00050000-10143500` or `00050000-10143600`), **version 0** (the disc, or the eShop release without the update): a disc image (`.wux`/`.wud`) with its disc key and your console's Wii U common key, or the extracted game folder (`code/`, `content/`, `meta/`) |
 | **A Switch** | Running Atmosphère with the Homebrew Menu, and about 3 GB free on the SD card |
 | **A computer** | Windows 10/11, macOS or Linux; 8 GB of RAM or more, 10 GB of free disk space |
-| **On the computer** | Python 3, this release unzipped, and the Switch toolchain: on **Windows**, [devkitPro](#windows-devkitpro-no-docker-or-wsl) (recommended: no Docker, no WSL); on macOS and Linux, [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker / Podman on Linux) |
+| **On the computer** | Python 3, this release unzipped, and the Switch toolchain: on **Windows**, [devkitPro](#windows-devkitpro-no-docker-or-wsl) (recommended: no Docker, no WSL); on **macOS**, [native devkitPro](#macos-native-devkitpro-no-docker) or [Docker Desktop](https://www.docker.com/products/docker-desktop/); on **Linux**, Docker or Podman |
 
 How to dump the game and the keys from your own Wii U is outside this guide: the
 [Cemu dumping guide](https://cemu.cfw.guide/dumping-games.html) (Dumpling) covers it. A dump made with
 Dumpling gives you the extracted folder directly (the base game, `00050000/10143500` or `10143600`, not the update).
+
+### macOS: native devkitPro (no Docker)
+
+SwitchWakerHD can be built natively on macOS using devkitPro. Docker and Podman are not
+required. A native build completed successfully on an Apple Silicon M2 Mac (8 GB RAM),
+using a version 0 dump of the European release.
+
+1. Install the Xcode command-line tools (if not already installed), Python 3, and CMake.
+   With [Homebrew](https://brew.sh/) installed, the commands are:
+
+   ```sh
+   xcode-select --install
+   brew install python cmake
+   ```
+
+2. Install the macOS `devkitpro-pacman-installer.pkg` from the
+   [devkitPro pacman releases](https://github.com/devkitPro/pacman/releases/latest).
+   Then install the Switch toolchain:
+
+   ```sh
+   sudo dkp-pacman -Syu
+   sudo dkp-pacman -S --needed switch-dev deko3d uam switch-lz4 switch-zlib switch-cmake
+   ```
+
+3. Set the devkitPro environment variables in the terminal where you will build:
+
+   ```sh
+   export DEVKITPRO=/opt/devkitpro
+   export DEVKITA64="$DEVKITPRO/devkitA64"
+   export PATH="$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH"
+   ```
+
+4. From the unzipped release folder (or a repository checkout), run the installer with
+   your own game dump. For an extracted base game:
+
+   ```sh
+   WWHD_NATIVE=1 python3 tools/switch/make_sd.py --game-dir /path/to/game --jobs 2
+   ```
+
+   Use `--image` or `--wua` instead of `--game-dir` for those formats (see step 2 below).
+   `--jobs 2` limits parallel compiles for machines with 8 GB RAM.
+
+`make_sd.py` selects the native toolchain automatically when neither Docker nor Podman
+is installed and `DEVKITPRO` is set. If a Docker/Podman executable **is installed**,
+however, the installer selects the container path even when its daemon is not running.
+Setting `WWHD_NATIVE=1` as shown above makes `build.sh` use devkitPro instead; this
+also avoids the Docker socket connection error.
+
+The optional native HOME-screen forwarder instructions below are for Windows; the
+macOS procedure above builds the `.nro` for launching from the Homebrew Menu.
 
 ### Windows: devkitPro (no Docker or WSL)
 
@@ -65,8 +115,8 @@ python3 tools/switch/make_sd.py --game-dir /path/to/10143500
 ```
 
 It checks the game version first, then translates the game's code (about a minute) and builds the
-homebrew in Docker, or with devkitPro on Windows (10 to 30 minutes the first time; Docker downloads the
-toolchain image, about 1 GB).
+homebrew in Docker/Podman, or natively with devkitPro on Windows or macOS (10 to 30 minutes the
+first time; Docker downloads the toolchain image, about 1 GB).
 If the computer runs out of memory, add `--jobs 2`.
 
 At the end the folder `build/sd/` holds:
@@ -138,8 +188,8 @@ it). Saves (`save/`), settings (`settings.ini`) and the compiled graphics stay.
 |---|---|
 | `make_sd: ... not the expected file` | The dump is not version 0 of the USA or European game, or the update was merged into it: use the base game only |
 | `the disc key was not found` / `common key not found` | Put `GAME.key` next to `GAME.wux`, and `common.key` next to it (or `WIIU_COMMON_KEY`) |
-| Docker errors | Docker Desktop must be running (on Windows, with its WSL integration on) |
-| `Docker or Podman is needed ... or a native devkitPro` | On Windows, do the "Windows: devkitPro" setup above; elsewhere, install Docker |
+| Docker errors | For a container build, Docker Desktop must be running (on Windows, with its WSL integration on). On macOS with native devkitPro installed, use `WWHD_NATIVE=1` to avoid invoking Docker when the Docker executable is present but its daemon is stopped |
+| `Docker or Podman is needed ... or a native devkitPro` | On macOS or Windows, install and configure native devkitPro as described above; on Linux, install Docker or Podman |
 | The game closes at once or says it is out of memory | Start it in title mode (hold R), not from the album |
 | No button works | The game's controller setting differs from the menu's Switch tab: set both to the same |
 | Something else | `sdmc:/switch/wwhd/wwhd.log` and `logs/` say what happened; include them in a report (they contain no game data) |
