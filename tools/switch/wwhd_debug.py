@@ -5,7 +5,7 @@ The console runs it when the settings menu turns it on (Switch tab > Debug > Deb
 log says '[debug] server listening on <ip>:6543'.
 The console's address: --host, else WWHD_SWITCH_HOST, else the first line of build/switch_host.txt.
 
-  wwhd_debug.py info                      build, frame, stage, heap, address
+  wwhd_debug.py info                      build, frame, stage, heap, battery, address
   wwhd_debug.py log [--all] [--save F] [--grep RE] [--seconds N]
                                           the log as it is written (Ctrl-C ends it)
   wwhd_debug.py deploy [NRO] [--no-reload]
@@ -308,7 +308,7 @@ def main():
 
     for name in ("info", "ping", "help", "warps", "quit", "reload"):
         sub.add_parser(name)
-    for name in ("press", "hold", "release", "warp", "stick"):
+    for name in ("press", "hold", "release", "warp", "stick", "peek", "poke"):
         sp = sub.add_parser(name)
         sp.add_argument("rest", nargs="*")
     sp = sub.add_parser("raw")
@@ -346,7 +346,7 @@ def main():
     try:
         if args.cmd in ("info", "ping", "help", "warps", "quit", "reload"):
             simple(args, args.cmd)
-        elif args.cmd in ("press", "hold", "release", "warp", "stick"):
+        elif args.cmd in ("press", "hold", "release", "warp", "stick", "peek", "poke"):
             simple(args, args.cmd, *args.rest, timeout=120.0)
         elif args.cmd == "raw":
             simple(args, *args.rest, timeout=120.0)

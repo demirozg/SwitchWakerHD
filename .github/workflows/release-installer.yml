@@ -1,0 +1,56 @@
+name: Build Windows Installer
+
+on:
+  release:
+    types: [published]
+  # By hand on any branch, to try an installer change before a release: the .exe is a run artifact
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish installer (net48, WPF)
+        shell: pwsh
+        run: |
+          dotnet publish installer/src/SwitchWakerHD.Installer.csproj `
+            --configuration Release `
+            -p:Version=$(if ("${{ github.event_name }}" -eq "release") { "${{ github.ref_name }}" -replace '^v','' } else { "0.0.0" }) `
+            --output installer/bin `
+            --nologo
+
+      - name: Compute SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash installer/bin/SwitchWakerHD-Installer.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  SwitchWakerHD-Installer.exe" | Out-File -Encoding ascii installer/bin/SwitchWakerHD-Installer.exe.sha256
+          Write-Host "SHA256: $hash"
+
+      - name: Upload as a run artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwitchWakerHD-Installer
+          path: |
+            installer/bin/SwitchWakerHD-Installer.exe
+            installer/bin/SwitchWakerHD-Installer.exe.sha256
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/bin/SwitchWakerHD-Installer.exe
+            installer/bin/SwitchWakerHD-Installer.exe.sha256

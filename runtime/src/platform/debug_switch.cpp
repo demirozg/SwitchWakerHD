@@ -17,6 +17,7 @@
 
 #include "../build_info.h"
 #include "../gfx/switch_renderer.h"
+#include "../gfx/deko/frame_pacing.h"
 #include "../mods/mods.h"
 #include "../mods/warps.h"
 #include "../runtime.h"
@@ -46,13 +47,23 @@ std::string ip_text() {
 
 bool game_running() { return render::frame_count() > 0; }  // guest memory and the game's data are there
 
+// battery charge, charger and mode (psm), e.g. "72%, on battery, handheld": to know before a long test on the console
+std::string power_text() {
+    static const bool psm = R_SUCCEEDED(psmInitialize());
+    u32 percent = 0;
+    PsmChargerType charger = PsmChargerType_Unconnected;
+    if (!psm || R_FAILED(psmGetBatteryChargePercentage(&percent)) || R_FAILED(psmGetChargerType(&charger))) return "unknown";
+    return std::to_string(percent) + "%, " + (charger == PsmChargerType_Unconnected ? "on battery" : "charging") + ", " +
+           (appletGetOperationMode() == AppletOperationMode_Console ? "docked" : "handheld");
+}
+
 debugsrv::Reply info(const debugsrv::Args&) {
-    char b[512];
+    char b[640];
     AppletType type = appletGetAppletType();
     snprintf(b, sizeof b,
-             "version %s (%s)\nframe %llu\nstage %s\nheap never used %zu MiB\nrunning as %s\naddress %s:%d\n",
+             "version %s (%s)\nframe %llu\nstage %s\nheap never used %zu MiB\nbattery %s\nrunning as %s\naddress %s:%d\n",
              build::version(), build::commit(), (unsigned long long)render::frame_count(),
-             game_running() ? mods::current_stage().c_str() : "-", heap_never_used_mib(),
+             game_running() ? mods::current_stage().c_str() : "-", heap_never_used_mib(), power_text().c_str(),
              type == AppletType_Application ? "application (the HOME menu forwarder: reload works)"
                                             : "applet (hbmenu: reload does not work, use quit and nxlink)",
              ip_text().c_str(), g_port);
@@ -191,6 +202,14 @@ debugsrv::Reply blur(const debugsrv::Args& a) {
     return debugsrv::ok(std::string("blur ") + (gfxsw::distance_blur() ? "on" : "off"));
 }
 
+// "pacing [0|1]": frame pacing mode (gfx/deko/frame_pacing.h, #23): 1 swap interval the game's (the default),
+// 0 swap interval 1 (as before); not saved
+debugsrv::Reply pacing(const debugsrv::Args& a) {
+    if (!a.empty()) frame_pacing::set_mode(atoi(a[0].c_str()));
+    return debugsrv::ok("pacing " + std::to_string(frame_pacing::mode()) + ": swap interval " +
+                        (frame_pacing::mode() ? "the game's" : "1"));
+}
+
 // "dspguard [0|1]": the game's DSP-overload guard (audio_guard_switch.h): 1 the game's own, 0 off (the default)
 debugsrv::Reply dspguard(const debugsrv::Args& a) {
     if (!a.empty()) audio_guard::set_kept(a[0] != "0");
@@ -237,6 +256,40 @@ debugsrv::Reply evict(const debugsrv::Args& a) {
     return debugsrv::ok(gfxsw::texture_eviction_report());
 }
 
+// game memory as hex, 16 bytes a line (big-endian words as the game sees them): MEM2 (data, heap) only
+debugsrv::Reply peek(const debugsrv::Args& a) {
+    if (a.empty()) return debugsrv::err("peek <address> [bytes]");
+    const uint32_t addr = uint32_t(strtoul(a[0].c_str(), nullptr, 16)) & ~3u;
+    const uint32_t len = std::min<uint32_t>(a.size() > 1 ? uint32_t(strtoul(a[1].c_str(), nullptr, 0)) : 64u, 4096u);
+    if (addr < mem::kMem2Start || addr + len > mem::kMem2End || addr + len < addr)
+        return debugsrv::err("peek: outside MEM2 (10000000-4FFFFFFF)");
+    std::string out;
+    char b[16];
+    for (uint32_t o = 0; o < len; o += 4) {
+        if (o % 16 == 0) {
+            snprintf(b, sizeof b, "%s%08X:", o ? "\n" : "", addr + o);
+            out += b;
+        }
+        snprintf(b, sizeof b, " %08X", ld32(addr + o));
+        out += b;
+    }
+    return debugsrv::ok(out + "\n");
+}
+
+// a big-endian word into game memory (MEM2), for experiments on the game's data
+debugsrv::Reply poke(const debugsrv::Args& a) {
+    if (a.size() < 2) return debugsrv::err("poke <address> <word>");
+    const uint32_t addr = uint32_t(strtoul(a[0].c_str(), nullptr, 16)) & ~3u;
+    const uint32_t v = uint32_t(strtoul(a[1].c_str(), nullptr, 16));
+    if (addr < mem::kMem2Start || addr + 4 > mem::kMem2End) return debugsrv::err("poke: outside MEM2 (10000000-4FFFFFFF)");
+    const uint32_t old = ld32(addr);
+    st32(addr, v);
+    LOG("[debug] poke %08X: %08X -> %08X", addr, old, v);
+    char b[64];
+    snprintf(b, sizeof b, "%08X: %08X -> %08X\n", addr, old, v);
+    return debugsrv::ok(b);
+}
+
 debugsrv::Reply quit(const debugsrv::Args&) {
     debugsrv::Reply r = debugsrv::ok("quitting");
     r.after = [] {
@@ -256,7 +309,7 @@ void start() {
     // a console under test from the computer is often left alone for minutes: no auto-sleep while the server runs
     appletSetAutoSleepDisabled(true);
     LOG("[debug] auto-sleep off while the debug server runs");
-    debugsrv::add_command("info", "info                   build, frame, stage, heap, address", info);
+    debugsrv::add_command("info", "info                   build, frame, stage, heap, battery, address", info);
     debugsrv::add_command("warps", "warps                  the warp destinations, numbered", warps);
     debugsrv::add_command("warp", "warp <n> | warp <stage> [room] [point]", warp);
     debugsrv::add_command("shot", "shot [game]            PNG of the next frame (game: the game's picture alone)", shot);
@@ -264,12 +317,15 @@ void start() {
     debugsrv::add_command("prepare", "prepare start|stop|status  the Prepare graphics sweep", prepare);
     debugsrv::add_command("scanbench", "scanbench              time reading the game's shader programs (log)", scanbench);
     debugsrv::add_command("dspguard", "dspguard [0|1]         the game's DSP-overload guard: 1 its own, 0 off", dspguard);
+    debugsrv::add_command("pacing", "pacing [0|1]           frame pacing: 1 swap interval the game's, 0 always 1", pacing);
     debugsrv::add_command("bloom", "bloom [0|1]            the Switch tab's Bloom (not saved)", bloom);
     debugsrv::add_command("blur", "blur [0|1]             the Switch tab's Distance blur (not saved)", blur);
     debugsrv::add_command("stall", "stall <ms> [core] [n] [gap]  spin above the game threads (audio guard tests)", stall);
     debugsrv::add_command("evict", "evict [now | idle <n>] texture eviction: now, or after n unused frames", evict);
     debugsrv::add_command("bgshaders", "bgshaders [start]      background shaders: start / status", bgshaders);
     debugsrv::add_command("quit", "quit                   end the program", quit);
+    debugsrv::add_command("peek", "peek <addr> [bytes]    game memory (MEM2) as hex words", peek);
+    debugsrv::add_command("poke", "poke <addr> <word>     write a word of game memory (MEM2)", poke);
     debugsrv::Config c;
     c.port = g_port;
     c.root = host::config_dir();

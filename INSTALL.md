@@ -5,6 +5,45 @@ comes with it**: you build it on your computer from your own copy of the game, w
 the result to the SD card. What you build contains the game, so it is for your own console only: do not
 share it.
 
+## Windows: Easy Installer (recommended)
+
+On **Windows 10/11**, an automatic installer handles everything for you: Python, devkitPro, the release
+download, and the build. You only need your own personal dump of the game.
+
+**[⬇ Download SwitchWakerHD-Installer.exe](https://github.com/centollOS/SwitchWakerHD/releases/latest/download/SwitchWakerHD-Installer.exe)**
+
+1. Download the `.exe` above and double-click it.
+2. Accept the UAC prompt (the installer needs Administrator rights to install devkitPro).
+3. Pick your game dump: a Cemu archive (`.wua`), a disc image (`.wux`/`.wud`, with its keys), or an
+   extracted folder.
+   Optional, for a **HOME-screen icon**: choose your console's `prod.keys` (dumped with Lockpick_RCM; they are
+   read where they are, never copied). The installer then also sets up Git, Pillow and MSYS2's gcc and builds
+   the forwarder `.nsp` ([details](tools/switch/forwarder/INSTALL.md)); it travels in `NSP\` with the rest: install it with
+   DBI (*Browse SD card > NSP > wwhd_forwarder.nsp > Install*; it needs current Atmosphère sigpatches).
+4. Press **Install**. If devkitPro is not installed yet, the installer asks you to open its setup: accept the
+   license and keep the default path (`C:\devkitPro`).
+5. Wait for the build (10–30 minutes), then choose how the files reach the Switch:
+   - **Over a USB cable, with DBI**: on the Switch, open DBI and choose *Run MTP responder*, then connect the cable.
+   - **With the microSD card in the PC**: a card reader, or hekate's *USB Tools > SD Card* (UMS).
+   - **By hand**: the installer opens the folder; copy its contents to the root of the SD card.
+
+If something fails, *Show details* shows what happened; the full log is in
+`%USERPROFILE%\SwitchWakerHD-Build\installer.log` (in `C:\SwitchWakerHD-Build\installer.log` when your Windows
+user name has a space or an accented letter: the installer then works there).
+
+> **Windows SmartScreen** may show *"Windows protected your PC"* on first run because the installer is
+> not code-signed. Click **More info → Run anyway**. This is expected for open-source unsigned executables.
+> The [source code](installer/src) and [build script](installer/build.ps1) are in this repository.
+
+The installer is multilingual: it starts in **English** or **Spanish** based on your Windows display
+language, and the button in its corner switches between them.
+
+---
+
+*For macOS, Linux, or manual Windows setup, continue below.*
+
+---
+
 ## 1. What you need
 
 | | |
@@ -78,7 +117,7 @@ in a normal PowerShell or Command Prompt (write `python` where step 2 says `pyth
    `python -m pip install zstandard pycryptodome` (`zstandard` is for a `.wua`, `pycryptodome` for a `.wux`/`.wud`).
 2. Install devkitPro from <https://github.com/devkitPro/installer/releases> into the default `C:\devkitPro`.
 3. Open *devkitPro > MSYS2* from the Start menu and run
-   `pacman -Syu`, then `pacman -S --needed switch-dev deko3d uam switch-lz4 switch-zlib switch-cmake`.
+   `pacman -Syu`, then `pacman -S --needed switch-dev deko3d uam switch-lz4 switch-zlib switch-cmake cmake make`.
 
 A Cemu `.wua` archive works directly, with no keys: `python tools/switch/make_sd.py --wua "C:\path\game.wua"`.
 The first build takes 10 to 30 minutes.
@@ -155,11 +194,9 @@ with the GamePad features (its screen, **gyro aiming**), choose *Wii U GamePad* 
 
 ### The Switch tab of the menu
 
-CPU clock (1224 MHz by default; up to 1785 MHz), handheld GPU profile (Nintendo's official profiles, plus
-a 614 MHz overclock), picture profile per mode (internal resolution, dynamic resolution), picture
-adjustments, frame-rate counter, controller (Pro Controller or GamePad), gyro aiming. Higher clocks drain
-the battery faster and warm the console. If sys-clk has its own profile for this title, the two fight
-over the clocks. Other tabs: Saves (save states), Warp (go to any place), Mods, About.
+Handheld GPU profile (Nintendo's official profiles; stock by default), picture profile per mode
+(internal resolution, dynamic resolution), picture adjustments, frame-rate counter, controller (Pro
+Controller or GamePad), gyro aiming. The game sets no CPU or GPU overclock; for one, use sys-clk. Other tabs: Saves (save states), Warp (go to any place), Mods, About.
 
 ## The first start: preparing the graphics
 

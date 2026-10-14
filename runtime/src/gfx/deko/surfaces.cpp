@@ -742,7 +742,8 @@ bool capture_upload_data(Surface* s, std::vector<uint8_t>& out, bool& changed) {
 }
 
 // ---------------------------------------------------------------- internal resolution
-// As gfx/gl: render targets the shape of the screen (1280x720 and its reductions down to 60x33, not the
+// As gfx/gl: render targets the shape of the screen (1280x720 and its reductions down to 640x360; 320x180 and below
+// stay at the guest size, screen_shaped below; not the
 // GamePad's 854x480 ones, shadow maps, mip chains or arrays) get res_scale() x their guest size. Shaders sample
 // with normalized coordinates and draws scale their viewport and scissor (draw.cpp), so they render the same
 // picture at fewer (or more) pixels; uf_fragCoordScale / uf_texNScale give programs that need them the factors.
@@ -760,6 +761,12 @@ std::atomic<float> g_resShown{g_resFrame};
 bool screen_shaped(const Surface* s) {
     if (s->fmt.compressed || s->mips > 1 || s->slices > 1 || s->width < 32 || s->img.type != DkImageType_2D) return false;
     if (!format_can_2d(s->fmt.image)) return false;  // (its contents could not be resampled: kept at the guest size)
+    // 320x180 and its reductions (the bloom chain and the other small passes) stay at the guest size: with dynamic
+    // resolution at 0.75-0.9 the bloom covered only that share of the screen, the rest kept older levels (a green
+    // band on the right with grass close to the camera, or a quarter of the screen without bloom; issue #32). The
+    // exact step that misses the scale was not found (no image overlap, no freed image in use, no mixed-scale draw);
+    // these targets are a few hundred KB, so scaling them saved next to nothing
+    if (s->width <= 320) return false;
     for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
         if ((s->width == w || s->width == w + 1) && s->height == h) return false;
     float r = float(s->width) * 9.0f / (float(s->height) * 16.0f);
@@ -2147,19 +2154,22 @@ void surface_stats() {
     descriptor_usage(images, samplers);
     const StagingStats& st = g_stagingStats;
     auto ms = [&](uint64_t ns) { return double(ns) / 1e6 / secs; };
+    // R.perf goes back to zero after backend.cpp's own 5 s report (not in step with this one): a counter
+    // that went down counts from zero, not as a wrapped-around difference
+    auto d = [](uint64_t now, uint64_t before) { return now >= before ? now - before : now; };
     LOG("[dk] surfaces: %zu (%.1f MiB, render targets %.1f MiB); uploads %llu (%.1f MiB, %.1f ms/s), staging %.1f MiB/s, "
         "%llu waits (%.1f ms), %llu one-off blocks; clears %llu (%.1f ms/s), copies %llu (%llu by the CPU, %.1f ms/s), "
         "scan copies %llu (%llu made), feedback copies %llu, invalidates %llu (%.1f ms/s); descriptors: %u images, "
         "%u samplers; evicted textures %llu (idle %llu, %.1f MiB; memory full %llu, %.1f MiB, so far), %llu restored",
-        count, double(total) / 1048576.0, double(targets) / 1048576.0, (unsigned long long)(p.uploads - last.uploads),
-        double(p.uploadBytes - last.uploadBytes) / 1048576.0, ms(p.uploadNs - last.uploadNs),
+        count, double(total) / 1048576.0, double(targets) / 1048576.0, (unsigned long long)d(p.uploads, last.uploads),
+        double(d(p.uploadBytes, last.uploadBytes)) / 1048576.0, ms(d(p.uploadNs, last.uploadNs)),
         double(st.bytes - lastStaging.bytes) / 1048576.0 / secs, (unsigned long long)(st.waits - lastStaging.waits),
         double(st.waitNs - lastStaging.waitNs) / 1e6, (unsigned long long)(st.oneOffs - lastStaging.oneOffs),
-        (unsigned long long)(p.clears - last.clears), ms(p.clearNs - last.clearNs),
-        (unsigned long long)(p.surfaceCopies - last.surfaceCopies), (unsigned long long)(p.cpuSurfaceCopies - last.cpuSurfaceCopies),
-        ms(p.surfaceCopyNs - last.surfaceCopyNs), (unsigned long long)(p.scans - last.scans),
-        (unsigned long long)(p.scanBlits - last.scanBlits), (unsigned long long)(p.feedbackCopies - last.feedbackCopies),
-        (unsigned long long)(p.invalidates - last.invalidates), ms(p.invalidateNs - last.invalidateNs), images, samplers,
+        (unsigned long long)d(p.clears, last.clears), ms(d(p.clearNs, last.clearNs)),
+        (unsigned long long)d(p.surfaceCopies, last.surfaceCopies), (unsigned long long)d(p.cpuSurfaceCopies, last.cpuSurfaceCopies),
+        ms(d(p.surfaceCopyNs, last.surfaceCopyNs)), (unsigned long long)d(p.scans, last.scans),
+        (unsigned long long)d(p.scanBlits, last.scanBlits), (unsigned long long)d(p.feedbackCopies, last.feedbackCopies),
+        (unsigned long long)d(p.invalidates, last.invalidates), ms(d(p.invalidateNs, last.invalidateNs)), images, samplers,
         (unsigned long long)g_evict.out, (unsigned long long)g_evict.idle, double(g_evict.idleBytes) / 1048576.0,
         (unsigned long long)g_evict.pressure, double(g_evict.pressureBytes) / 1048576.0,
         (unsigned long long)g_evict.restores);
@@ -2183,6 +2193,8 @@ void surfaces_frame_start() {
     evict_idle();
     surface_stats();
 }
+
+size_t surface_structs() { return S.list.size(); }
 
 void surface_memory(size_t& total, size_t& targets, size_t& count) {
     total = targets = count = 0;

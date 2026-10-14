@@ -9,6 +9,8 @@
 # build/gen may be a symbolic link (git worktrees share the main checkout's): its target is mounted into the
 # container at the same path (not for the native build).
 set -euo pipefail
+# a command that fails without printing anything (a tool that cannot start: issue #28) still says which one
+trap 'rc=$?; echo "build.sh: line $LINENO: \"$BASH_COMMAND\" failed (exit code $rc)" >&2' ERR
 cd "$(dirname "$0")/../.."
 
 if ! ls build/gen/code_*.c >/dev/null 2>&1; then
@@ -27,11 +29,25 @@ if [[ -z "$engine" || $native == 1 ]]; then
     fi
     native=1
 fi
+# devkitPro's packages do not bring the host cmake/make (issue #28): say so instead of "command not found"
+if [[ $native == 1 ]] && ! command -v cmake >/dev/null; then
+    echo "cmake is missing: install it with: pacman -Syu, then pacman -S --needed cmake make (devkitPro's MSYS2 on Windows)" >&2
+    exit 1
+fi
 image=docker.io/devkitpro/devkita64:latest
+# MSYS2 (devkitPro's bash on Windows) rewrites /src-like arguments of native programs such as docker.exe into
+# C:/devkitPro/msys2/src (issue #22): keep the container paths as they are and give Docker Windows host paths.
+# Only for the container: the native build needs that conversion, or the Windows gcc gets /home/... paths.
+host_pwd=$PWD
+if [[ $native != 1 ]]; then
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'; host_pwd=$(pwd -W) ;;
+    esac
+fi
 # each generated file needs a lot of compiler memory at -O3: WWHD_JOBS limits parallel compiles
 cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)  # (macOS has no nproc)
 jobs=${WWHD_JOBS:-$(( cpus / 2 > 0 ? cpus / 2 : 1 ))}
-mounts=(-v "$PWD":/src:Z)
+mounts=(-v "$host_pwd":/src:Z)
 for link in build/gen; do
     if [[ -L $link ]]; then
         target=$(cd "$link" && pwd -P)
@@ -62,6 +78,9 @@ if [[ $native == 1 ]]; then
     cmake --build "$dir" -j $jobs
 else
 "$engine" run --rm "${mounts[@]}" -w /src "$image" bash -c "
+    # git refuses a repository owned by another user (the container runs as root; issue fixed by #36). From /:
+    # in a git worktree /src/.git points outside the mount, and git run inside /src would stop the build
+    git -C / config --global --add safe.directory /src &&
     cmake -S . -B $dir -G Ninja -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake \
           -DCMAKE_BUILD_TYPE=${WWHD_BUILD_TYPE:-Release} $options &&
     ninja -C $dir -j $jobs"
